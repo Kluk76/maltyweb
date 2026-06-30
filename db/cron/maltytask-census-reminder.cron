@@ -49,5 +49,9 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # m   h  dom mon dow  user        command
 
-# DISABLED — uncomment only after completing the pre-flight checklist above.
-# 0   *   *   *   *   maltytask  flock -n /tmp/maltytask-census-reminder.lock php8.1 /var/www/maltytask/scripts/send-census-reminder.php --apply >> /var/log/maltytask/census-reminder.log 2>&1
+# ACTIVATED 2026-06-30 — pre-flight complete (dry-run ✓ staleness-only "all sites
+# fresh — nothing to send"; live test to kouros@ received ✓). Overdue pass mode='on'
+# (staleness-only; silent until a site's census ages past fg_census_stale_days).
+# Month-close pass mode='test' (emails kouros@ only) until operator opts in for managers.
+# User = maltytask (house convention: owns /var/log/maltytask + reads config/db.env).
+0   *   *   *   *   maltytask  flock -n /tmp/maltytask-census-reminder.lock php8.1 /var/www/maltytask/scripts/send-census-reminder.php --apply >> /var/log/maltytask/census-reminder.log 2>&1
